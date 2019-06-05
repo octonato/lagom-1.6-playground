@@ -51,6 +51,8 @@ public class ShoppingCartServiceImpl implements ShoppingCartService {
 
     @Override
     public ServiceCall<NotUsed, ShoppingCart> get(String id) {
+
+        logger.info("reading cart [" + id + "]");
         return request ->
                 entityRef(id)
                         .ask(ShoppingCartCommand.Get.INSTANCE)
