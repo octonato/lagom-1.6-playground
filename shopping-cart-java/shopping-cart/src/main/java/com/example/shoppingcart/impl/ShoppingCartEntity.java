@@ -8,6 +8,9 @@ import com.example.shoppingcart.impl.ShoppingCartEvent.CheckedOut;
 import com.example.shoppingcart.impl.ShoppingCartEvent.ItemUpdated;
 import com.lightbend.lagom.javadsl.persistence.PersistentEntity;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.Instant;
 import java.util.Optional;
 
@@ -33,6 +36,8 @@ import java.util.Optional;
  * is emitted when a {@link Checkout} command is received.
  */
 public class ShoppingCartEntity extends PersistentEntity<ShoppingCartCommand, ShoppingCartEvent, ShoppingCartState> {
+
+    private Logger logger = LoggerFactory.getLogger(this.getClass());
     /**
      * An entity can define different behaviours for different states, but it will
      * always start with an initial behaviour. This entity only has one behaviour.
@@ -63,6 +68,7 @@ public class ShoppingCartEntity extends PersistentEntity<ShoppingCartCommand, Sh
                 ctx.commandFailed(new ShoppingCartException("Cannot delete item that is not already in cart"));
                 return ctx.done();
             } else {
+                logger.info("updating entity cart [" + entityId() + "]");
                 return ctx.thenPersist(new ItemUpdated(entityId(), cmd.getProductId(), cmd.getQuantity(), Instant.now()), e -> ctx.reply(Done.getInstance()));
             }
         });

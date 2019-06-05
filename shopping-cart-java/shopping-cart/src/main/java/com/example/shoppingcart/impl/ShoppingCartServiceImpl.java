@@ -18,6 +18,8 @@ import com.example.shoppingcart.api.ShoppingCartItem;
 import com.lightbend.lagom.javadsl.persistence.ReadSide;
 import com.lightbend.lagom.javadsl.persistence.jpa.JpaSession;
 import org.pcollections.TreePVector;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -33,6 +35,8 @@ public class ShoppingCartServiceImpl implements ShoppingCartService {
     private final PersistentEntityRegistry persistentEntityRegistry;
 
     private final ReportRepository reportRepository;
+
+    private Logger logger = LoggerFactory.getLogger(this.getClass());
 
     @Inject
     public ShoppingCartServiceImpl(PersistentEntityRegistry persistentEntityRegistry, ReportRepository reportRepository) {
@@ -66,6 +70,8 @@ public class ShoppingCartServiceImpl implements ShoppingCartService {
 
     @Override
     public ServiceCall<ShoppingCartItem, Done> updateItem(String id) {
+
+        logger.info("updating cart [" + id + "]");
         return item ->
                 convertErrors(
                         entityRef(id)
