@@ -104,7 +104,11 @@ public class ShoppingCartEntity extends PersistentEntity<ShoppingCartCommand, Sh
      * Add all the handlers that are shared across all states to the behavior builder.
      */
     private void commonHandlers(BehaviorBuilder b) {
-        b.setReadOnlyCommandHandler(Get.class, (cmd, ctx) -> ctx.reply(state()));
+
+        b.setReadOnlyCommandHandler(Get.class, (cmd, ctx) -> {
+            logger.info("getting entity cart state [" + entityId() + "]");
+            ctx.reply(state());
+        });
 
         b.setEventHandler(ItemUpdated.class, itemUpdated ->
             state().updateItem(itemUpdated.getProductId(), itemUpdated.getQuantity()));

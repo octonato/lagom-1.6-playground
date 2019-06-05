@@ -1,6 +1,6 @@
 #!/bin/sh
 
-shopping.batch() {
+shopping.update.batch() {
   for i in {1..40}
   do
     http POST localhost:$1/shoppingcart/$2-${i}  productId=$2 quantity:=${i} -v
@@ -13,6 +13,13 @@ shopping.report() {
 
 shopping.get() {
   http localhost:$1/shoppingcart/$2
+}
+
+shopping.get.batch() {
+  for i in {1..40}
+  do
+    http localhost:$1/shoppingcart/$2-${i}
+  done
 }
 
 shopping.report() {
