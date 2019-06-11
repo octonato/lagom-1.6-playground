@@ -2,25 +2,26 @@ package com.example.shoppingcart.typedimpl;
 
 import akka.Done;
 import akka.NotUsed;
-import akka.japi.Pair;
+import akka.actor.typed.ActorRef;
+import akka.actor.typed.ActorSystem;
+import akka.cluster.sharding.typed.javadsl.ClusterSharding;
+import akka.cluster.sharding.typed.javadsl.EntityRef;
+import akka.util.Timeout;
 import com.example.shoppingcart.api.ShoppingCart;
 import com.example.shoppingcart.api.ShoppingCartReportView;
 import com.example.shoppingcart.api.ShoppingCartService;
 import com.lightbend.lagom.javadsl.api.ServiceCall;
 import com.lightbend.lagom.javadsl.api.transport.BadRequest;
 import com.lightbend.lagom.javadsl.api.transport.NotFound;
-import com.lightbend.lagom.javadsl.persistence.PersistentEntityRef;
-import com.lightbend.lagom.javadsl.persistence.PersistentEntityRegistry;
+import com.example.shoppingcart.typedimpl.ShoppingCartCommand.OperationResult;
 
 import javax.inject.Inject;
 
 import com.example.shoppingcart.api.ShoppingCartItem;
-import com.lightbend.lagom.javadsl.persistence.ReadSide;
-import com.lightbend.lagom.javadsl.persistence.jpa.JpaSession;
-import org.pcollections.TreePVector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -32,31 +33,32 @@ import java.util.concurrent.CompletionStage;
  */
 public class ShoppingCartServiceImpl implements ShoppingCartService {
 
-    private final PersistentEntityRegistry persistentEntityRegistry;
-
+    private final ActorSystem system;
     private final ReportRepository reportRepository;
+    private final ClusterSharding clusterSharding;
 
     private Logger logger = LoggerFactory.getLogger(this.getClass());
+    private final Timeout askTimeout = Timeout.create(Duration.ofSeconds(3));
 
     @Inject
-    public ShoppingCartServiceImpl(PersistentEntityRegistry persistentEntityRegistry, ReportRepository reportRepository) {
-        this.persistentEntityRegistry = persistentEntityRegistry;
+    public ShoppingCartServiceImpl(ActorSystem<?> system, ReportRepository reportRepository) {
+        this.system = system;
         this.reportRepository = reportRepository;
-        persistentEntityRegistry.register(ShoppingCartEntity.class);
+        ShoppingCartEntity.init(system);
+        clusterSharding = ClusterSharding.get(system);
     }
 
-    private PersistentEntityRef<ShoppingCartCommand> entityRef(String id) {
-        return persistentEntityRegistry.refFor(ShoppingCartEntity.class, id);
+    private EntityRef<ShoppingCartCommand> entityRef(String id) {
+        return clusterSharding.entityRefFor(ShoppingCartEntity.ENTITY_TYPE_KEY, id);
     }
 
     @Override
     public ServiceCall<NotUsed, ShoppingCart> get(String id) {
-
         logger.info("reading cart [" + id + "]");
         return request ->
-                entityRef(id)
-                        .ask(ShoppingCartCommand.Get.INSTANCE)
-                        .thenApply(cart -> convertShoppingCart(id, cart));
+          entityRef(id)
+            .ask(ShoppingCartCommand.Get::new, askTimeout)
+            .thenApply(cart -> convertShoppingCart(id, cart));
     }
 
     @Override
@@ -72,33 +74,34 @@ public class ShoppingCartServiceImpl implements ShoppingCartService {
 
     @Override
     public ServiceCall<ShoppingCartItem, Done> updateItem(String id) {
-
         logger.info("updating cart [" + id + "]");
         return item ->
-                convertErrors(
-                        entityRef(id)
-                                .ask(new ShoppingCartCommand.UpdateItem(item.getProductId(), item.getQuantity()))
-                );
+          convertOperationResult(
+            entityRef(id)
+              .ask((ActorRef<OperationResult> replyTo) ->
+                new ShoppingCartCommand.UpdateItem(item.getProductId(), item.getQuantity(), replyTo), askTimeout)
+          );
     }
 
     @Override
     public ServiceCall<NotUsed, Done> checkout(String id) {
         return request ->
-                convertErrors(
-                        entityRef(id)
-                                .ask(ShoppingCartCommand.Checkout.INSTANCE)
-                );
+          convertOperationResult(
+            entityRef(id)
+              .ask(ShoppingCartCommand.Checkout::new, askTimeout)
+          );
     }
 
-    private <T> CompletionStage<T> convertErrors(CompletionStage<T> future) {
+    private CompletionStage<Done> convertOperationResult(CompletionStage<OperationResult> future) {
         return future.exceptionally(ex -> {
-            if (ex instanceof ShoppingCartException) {
-                throw new BadRequest(ex.getMessage());
-            }
-            else {
-                throw new BadRequest("Error updating shopping cart");
-            }
-        });
+            // TimeoutException from ask
+            throw new BadRequest("Error updating shopping cart");
+        })
+          .thenApply(result -> {
+              if (result instanceof ShoppingCartCommand.Rejected)
+                  throw new BadRequest(((ShoppingCartCommand.Rejected) result).reason);
+              return Done.getInstance();
+          });
     }
 
     private ShoppingCart convertShoppingCart(String id, ShoppingCartState cart) {

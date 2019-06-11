@@ -1,11 +1,10 @@
 package com.example.shoppingcart.typedimpl;
 
-import akka.Done;
-import com.example.shoppingcart.api.ShoppingCart;
+import akka.actor.typed.ActorRef;
+import akka.persistence.typed.ExpectingReply;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.google.common.base.Preconditions;
-import com.lightbend.lagom.javadsl.persistence.PersistentEntity;
 import com.lightbend.lagom.serialization.CompressedJsonable;
 import com.lightbend.lagom.serialization.Jsonable;
 import lombok.Value;
@@ -17,24 +16,31 @@ import lombok.Value;
  * makes it simple to get a complete picture of what commands an entity
  * supports.
  */
-public interface ShoppingCartCommand extends Jsonable {
+public interface ShoppingCartCommand<ReplyType> extends Jsonable, ExpectingReply<ReplyType> {
     /**
      * A command to update an item.
      *
-     * It has a reply type of {@link akka.Done}, which is sent back to the caller
+     * It has a reply type of {@link OperationResult}, which is sent back to the caller
      * when all the events emitted by this command are successfully persisted.
      */
     @SuppressWarnings("serial")
     @Value
     @JsonDeserialize
-    final class UpdateItem implements ShoppingCartCommand, CompressedJsonable, PersistentEntity.ReplyType<Done> {
+    final class UpdateItem implements ShoppingCartCommand<OperationResult>, CompressedJsonable {
         public final String productId;
         public final int quantity;
+        private final ActorRef<OperationResult> replyTo;
 
         @JsonCreator
-        UpdateItem(String productId, int quantity) {
+        UpdateItem(String productId, int quantity, ActorRef<OperationResult> replyTo) {
             this.productId = Preconditions.checkNotNull(productId, "productId");
             this.quantity = quantity;
+            this.replyTo = replyTo;
+        }
+
+        @Override
+        public ActorRef<OperationResult> replyTo() {
+            return replyTo;
         }
     }
 
@@ -43,17 +49,49 @@ public interface ShoppingCartCommand extends Jsonable {
      *
      * The reply type is the {@link ShoppingCartState}
      */
-    enum Get implements ShoppingCartCommand, PersistentEntity.ReplyType<ShoppingCartState> {
-        INSTANCE
+    final class Get implements ShoppingCartCommand<ShoppingCartState> {
+        private final ActorRef<ShoppingCartState> replyTo;
+
+        public Get(ActorRef<ShoppingCartState> replyTo) {
+            this.replyTo = replyTo;
+        }
+
+        @Override
+        public ActorRef<ShoppingCartState> replyTo() {
+            return replyTo;
+        }
     }
 
     /**
      * A command to checkout the shopping cart.
      *
-     * The reply type is the Done, which will be returned when the events have been
+     * The reply type is the {@link OperationResult}, which will be returned when the events have been
      * emitted.
      */
-    enum Checkout implements ShoppingCartCommand, PersistentEntity.ReplyType<Done> {
+    class Checkout implements ShoppingCartCommand<OperationResult> {
+        private final ActorRef<OperationResult> replyTo;
+
+        public Checkout(ActorRef<OperationResult> replyTo) {
+            this.replyTo = replyTo;
+        }
+
+        @Override
+        public ActorRef<OperationResult> replyTo() {
+            return replyTo;
+        }
+    }
+
+    interface OperationResult {}
+
+    enum Confirmed implements OperationResult {
         INSTANCE
+    }
+
+    class Rejected implements OperationResult {
+        public final String reason;
+
+        public Rejected(String reason) {
+            this.reason = reason;
+        }
     }
 }
