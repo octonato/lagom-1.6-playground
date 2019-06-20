@@ -2,9 +2,6 @@ package com.example.shoppingcart.impl;
 
 import akka.actor.typed.ActorSystem;
 import akka.actor.typed.BackoffSupervisorStrategy;
-import akka.cluster.sharding.typed.HashCodeMessageExtractor;
-import akka.cluster.sharding.typed.ShardingEnvelope;
-import akka.cluster.sharding.typed.ShardingMessageExtractor;
 import akka.cluster.sharding.typed.javadsl.ClusterSharding;
 import akka.cluster.sharding.typed.javadsl.Entity;
 import akka.cluster.sharding.typed.javadsl.EntityTypeKey;
@@ -20,7 +17,6 @@ import com.example.shoppingcart.impl.ShoppingCartCommand.Rejected;
 import com.example.shoppingcart.impl.ShoppingCartCommand.UpdateItem;
 import com.example.shoppingcart.impl.ShoppingCartEvent.CheckedOut;
 import com.example.shoppingcart.impl.ShoppingCartEvent.ItemUpdated;
-import com.lightbend.lagom.javadsl.persistence.CommandEnvelope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -57,60 +53,9 @@ public class ShoppingCartEntity
   private Logger logger = LoggerFactory.getLogger(this.getClass());
 
   public static void init(ActorSystem<?> system) {
-
-    // This makes it possible to receive commands from Lagom's `PersistentEntityRef.ask`.
-    // It can be removed after full rolling update.
-    ShardingMessageExtractor<Object, ShoppingCartCommand> messageExtractor =
-      new ShardingMessageExtractor<Object, ShoppingCartCommand>() {
-
-        // Note that `HashCodeMessageExtractor` is using
-        // `(math.abs(id.hashCode) % numberOfShards).toString`.
-        // `akka.cluster.sharding.typed.HashCodeMessageExtractor` is compatible
-        // Lagom's hashing function
-        // and with `akka.cluster.sharding.ShardRegion.HashCodeMessageExtractor`
-        final HashCodeMessageExtractor delegate = new HashCodeMessageExtractor<ShoppingCartCommand>(
-          system.settings().config().getInt("akka.cluster.sharding.number-of-shards")
-        );
-
-        @SuppressWarnings("unchecked")
-        @Override
-        public String entityId(Object message) {
-          if (message instanceof CommandEnvelope) {
-            return ((CommandEnvelope) message).entityId();
-          } else if (message instanceof ShardingEnvelope) {
-            return delegate.entityId((ShardingEnvelope) message);
-          } else {
-            return null;
-          }
-        }
-
-        @Override
-        public String shardId(String entityId) {
-          return delegate.shardId(entityId);
-        }
-
-        @SuppressWarnings("unchecked")
-        @Override
-        public ShoppingCartCommand unwrapMessage(Object message) {
-          if (message instanceof CommandEnvelope) {
-            CommandEnvelope env = (CommandEnvelope) message;
-            if (env.payload() instanceof ShoppingCartCommand)
-              return (ShoppingCartCommand) env.payload();
-            else
-              return null;
-          } else if (message instanceof ShardingEnvelope) {
-            ShardingEnvelope<ShoppingCartCommand> env = (ShardingEnvelope<ShoppingCartCommand>) message;
-            return (ShoppingCartCommand) delegate.unwrapMessage(env);
-          } else {
-            return null;
-          }
-        }
-      };
-
     ClusterSharding.get(system).init(Entity.ofEventSourcedEntityWithEnforcedReplies(
       ShoppingCartEntity.ENTITY_TYPE_KEY,
-      context -> ShoppingCartEntity.create(context.getEntityId()))
-      .withMessageExtractor(messageExtractor));
+      context -> ShoppingCartEntity.create(context.getEntityId())));
   }
 
   public static ShoppingCartEntity create(String entityId) {
@@ -206,5 +151,3 @@ public class ShoppingCartEntity
     return state.checkout();
   }
 }
-
-
