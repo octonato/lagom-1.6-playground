@@ -48,7 +48,7 @@ public class ShoppingCartEntity
   extends EventSourcedEntityWithEnforcedReplies<ShoppingCartCommand, ShoppingCartEvent, ShoppingCartState> {
 
   public static EntityTypeKey<ShoppingCartCommand> ENTITY_TYPE_KEY =
-    EntityTypeKey.create(ShoppingCartCommand.class, "ShoppingCart");
+    EntityTypeKey.create(ShoppingCartCommand.class, "ShoppingCartEntity");
 
   private Logger logger = LoggerFactory.getLogger(this.getClass());
 

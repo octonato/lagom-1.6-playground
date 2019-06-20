@@ -52,6 +52,7 @@ public interface ShoppingCartCommand<ReplyType> extends Jsonable, ExpectingReply
     final class Get implements ShoppingCartCommand<ShoppingCartState> {
         private final ActorRef<ShoppingCartState> replyTo;
 
+        @JsonCreator
         public Get(ActorRef<ShoppingCartState> replyTo) {
             this.replyTo = replyTo;
         }
