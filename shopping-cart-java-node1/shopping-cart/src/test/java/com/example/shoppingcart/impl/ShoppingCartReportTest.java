@@ -1,6 +1,5 @@
 package com.example.shoppingcart.impl;
 
-import com.lightbend.lagom.internal.javadsl.api.broker.TopicFactory;
 import com.lightbend.lagom.javadsl.persistence.Offset;
 import com.lightbend.lagom.javadsl.persistence.ReadSide;
 import com.lightbend.lagom.javadsl.testkit.ReadSideTestDriver;

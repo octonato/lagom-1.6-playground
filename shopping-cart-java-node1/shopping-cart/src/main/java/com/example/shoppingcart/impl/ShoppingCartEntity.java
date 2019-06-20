@@ -1,18 +1,27 @@
 package com.example.shoppingcart.impl;
 
-import akka.Done;
+import akka.actor.typed.ActorSystem;
+import akka.actor.typed.BackoffSupervisorStrategy;
+import akka.cluster.sharding.typed.javadsl.ClusterSharding;
+import akka.cluster.sharding.typed.javadsl.Entity;
+import akka.cluster.sharding.typed.javadsl.EntityTypeKey;
+import akka.cluster.sharding.typed.javadsl.EventSourcedEntityWithEnforcedReplies;
+import akka.persistence.typed.javadsl.CommandHandlerWithReply;
+import akka.persistence.typed.javadsl.CommandHandlerWithReplyBuilder;
+import akka.persistence.typed.javadsl.EventHandler;
+import akka.persistence.typed.javadsl.ReplyEffect;
 import com.example.shoppingcart.impl.ShoppingCartCommand.Checkout;
+import com.example.shoppingcart.impl.ShoppingCartCommand.Confirmed;
 import com.example.shoppingcart.impl.ShoppingCartCommand.Get;
+import com.example.shoppingcart.impl.ShoppingCartCommand.Rejected;
 import com.example.shoppingcart.impl.ShoppingCartCommand.UpdateItem;
 import com.example.shoppingcart.impl.ShoppingCartEvent.CheckedOut;
 import com.example.shoppingcart.impl.ShoppingCartEvent.ItemUpdated;
-import com.lightbend.lagom.javadsl.persistence.PersistentEntity;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
 import java.time.Instant;
-import java.util.Optional;
 
 /**
  * This is an event sourced entity. It has a state, {@link ShoppingCartState}, which
@@ -35,86 +44,110 @@ import java.util.Optional;
  * when a {@link UpdateItem} command is received, and a {@link CheckedOut} event, which
  * is emitted when a {@link Checkout} command is received.
  */
-public class ShoppingCartEntity extends PersistentEntity<ShoppingCartCommand, ShoppingCartEvent, ShoppingCartState> {
+public class ShoppingCartEntity
+  extends EventSourcedEntityWithEnforcedReplies<ShoppingCartCommand, ShoppingCartEvent, ShoppingCartState> {
 
-    private Logger logger = LoggerFactory.getLogger(this.getClass());
-    /**
-     * An entity can define different behaviours for different states, but it will
-     * always start with an initial behaviour. This entity only has one behaviour.
-     */
-    @Override
-    public Behavior initialBehavior(Optional<ShoppingCartState> snapshotState) {
+  public static EntityTypeKey<ShoppingCartCommand> ENTITY_TYPE_KEY =
+    EntityTypeKey.create(ShoppingCartCommand.class, "ShoppingCart");
 
-        ShoppingCartState state = snapshotState.orElse(ShoppingCartState.EMPTY);
-        BehaviorBuilder b = newBehaviorBuilder(state);
+  private Logger logger = LoggerFactory.getLogger(this.getClass());
 
-        if (state.isCheckedOut()) {
-            return checkedOut(b);
-        } else {
-            return openShoppingCart(b);
-        }
+  public static void init(ActorSystem<?> system) {
+    ClusterSharding.get(system).init(Entity.ofEventSourcedEntityWithEnforcedReplies(
+      ShoppingCartEntity.ENTITY_TYPE_KEY,
+      context -> ShoppingCartEntity.create(context.getEntityId())));
+  }
+
+  public static ShoppingCartEntity create(String entityId) {
+    return new ShoppingCartEntity(entityId, BackoffSupervisorStrategy.restartWithBackoff(
+      Duration.ofSeconds(1), Duration.ofSeconds(10), 0.1));
+  }
+
+  private ShoppingCartEntity(String entityId,
+                             BackoffSupervisorStrategy onPersistFailure) {
+    super(ENTITY_TYPE_KEY, entityId, onPersistFailure);
+  }
+
+  @Override
+  public ShoppingCartState emptyState() {
+    return ShoppingCartState.EMPTY;
+  }
+
+  private final CheckedOutCommandHandlers checkedOutCommandHandlers = new CheckedOutCommandHandlers();
+  private final OpenShoppingCartCommandHandlers openShoppingCartCommandHandlers = new OpenShoppingCartCommandHandlers();
+
+  @Override
+  public CommandHandlerWithReply<ShoppingCartCommand, ShoppingCartEvent, ShoppingCartState> commandHandler() {
+    CommandHandlerWithReplyBuilder<ShoppingCartCommand, ShoppingCartEvent, ShoppingCartState> b =
+      newCommandHandlerWithReplyBuilder();
+
+    b.forState(state -> !state.isCheckedOut())
+      .onCommand(UpdateItem.class, openShoppingCartCommandHandlers::onUpdateItem)
+      .onCommand(Checkout.class, openShoppingCartCommandHandlers::onCheckout);
+
+    b.forState(state -> state.isCheckedOut())
+      .onCommand(UpdateItem.class, checkedOutCommandHandlers::onUpdateItem)
+      .onCommand(Checkout.class, checkedOutCommandHandlers::onCheckout);
+
+    b.forAnyState()
+      .onCommand(Get.class, this::onGet);
+
+    return b.build();
+  }
+
+  private ReplyEffect<ShoppingCartEvent, ShoppingCartState> onGet(ShoppingCartState state, Get cmd) {
+    logger.info("getting entity cart state [" + entityId() + "]");
+    return Effect().reply(cmd, state);
+  }
+
+  private class OpenShoppingCartCommandHandlers {
+
+    public ReplyEffect<ShoppingCartEvent, ShoppingCartState> onUpdateItem(ShoppingCartState state, UpdateItem cmd) {
+      if (cmd.getQuantity() < 0) {
+        return Effect().reply(cmd, new Rejected("Quantity must be greater than zero"));
+      } else if (cmd.getQuantity() == 0 && !state.getItems().containsKey(cmd.getProductId())) {
+        return Effect().reply(cmd, new Rejected("Cannot delete item that is not already in cart"));
+      } else {
+        logger.info("updating entity cart [" + entityId() + "]");
+        return Effect().persist(new ItemUpdated(entityId(), cmd.getProductId(), cmd.getQuantity(), Instant.now()))
+          .thenReply(cmd, newState -> Confirmed.INSTANCE);
+      }
     }
 
-    /**
-     * Create a behavior for the open shopping cart state.
-     */
-    private Behavior openShoppingCart(BehaviorBuilder b) {
-        // Command handler for the UpdateItem command
-        b.setCommandHandler(UpdateItem.class, (cmd, ctx) -> {
-            if (cmd.getQuantity() < 0) {
-                ctx.commandFailed(new ShoppingCartException("Quantity must be greater than zero"));
-                return ctx.done();
-            } else if (cmd.getQuantity() == 0 && !state().getItems().containsKey(cmd.getProductId())) {
-                ctx.commandFailed(new ShoppingCartException("Cannot delete item that is not already in cart"));
-                return ctx.done();
-            } else {
-                logger.info("updating entity cart [" + entityId() + "]");
-                return ctx.thenPersist(new ItemUpdated(entityId(), cmd.getProductId(), cmd.getQuantity(), Instant.now()), e -> ctx.reply(Done.getInstance()));
-            }
-        });
+    public ReplyEffect<ShoppingCartEvent, ShoppingCartState> onCheckout(ShoppingCartState state, Checkout cmd) {
+      if (state.getItems().isEmpty()) {
+        return Effect().reply(cmd, new Rejected("Cannot checkout empty cart"));
+      } else {
+        return Effect().persist(new CheckedOut(entityId(), Instant.now()))
+          .thenReply(cmd, newState -> Confirmed.INSTANCE);
+      }
+    }
+  }
 
-        // Command handler for the Checkout command
-        b.setCommandHandler(Checkout.class, (cmd, ctx) -> {
-            if (state().getItems().isEmpty()) {
-                ctx.commandFailed(new ShoppingCartException("Cannot checkout empty cart"));
-                return ctx.done();
-            } else {
-                return ctx.thenPersist(new CheckedOut(entityId(), Instant.now()), e -> ctx.reply(Done.getInstance()));
-            }
-        });
-        commonHandlers(b);
-        return b.build();
+  private class CheckedOutCommandHandlers {
+    ReplyEffect<ShoppingCartEvent, ShoppingCartState> onUpdateItem(UpdateItem cmd) {
+      return Effect().reply(cmd, new Rejected("Can't update item on already checked out shopping cart"));
     }
 
-    /**
-     * Create a behavior for the checked out state.
-     */
-    private Behavior checkedOut(BehaviorBuilder b) {
-        b.setReadOnlyCommandHandler(UpdateItem.class, (cmd, ctx) ->
-            ctx.commandFailed(new ShoppingCartException("Can't update item on already checked out shopping cart"))
-        );
-        b.setReadOnlyCommandHandler(Checkout.class, (cmd, ctx) ->
-            ctx.commandFailed(new ShoppingCartException("Can't checkout on already checked out shopping cart"))
-        );
-        commonHandlers(b);
-        return b.build();
+    ReplyEffect<ShoppingCartEvent, ShoppingCartState> onCheckout(Checkout cmd) {
+      return Effect().reply(cmd, new Rejected("Can't checkout on already checked out shopping cart"));
     }
+  }
 
-    /**
-     * Add all the handlers that are shared across all states to the behavior builder.
-     */
-    private void commonHandlers(BehaviorBuilder b) {
 
-        b.setReadOnlyCommandHandler(Get.class, (cmd, ctx) -> {
-            logger.info("getting entity cart state [" + entityId() + "]");
-            ctx.reply(state());
-        });
+  @Override
+  public EventHandler<ShoppingCartState, ShoppingCartEvent> eventHandler() {
+    return newEventHandlerBuilder().forAnyState()
+      .onEvent(ItemUpdated.class, this::onItemUpdated)
+      .onEvent(CheckedOut.class, this::onCheckedOut)
+      .build();
+  }
 
-        b.setEventHandler(ItemUpdated.class, itemUpdated ->
-            state().updateItem(itemUpdated.getProductId(), itemUpdated.getQuantity()));
+  private ShoppingCartState onItemUpdated(ShoppingCartState state, ItemUpdated event) {
+    return state.updateItem(event.getProductId(), event.getQuantity());
+  }
 
-        b.setEventHandlerChangingBehavior(CheckedOut.class, e ->
-            checkedOut(newBehaviorBuilder(state().checkout())));
-    }
-
+  private ShoppingCartState onCheckedOut(ShoppingCartState state, CheckedOut event) {
+    return state.checkout();
+  }
 }
