@@ -13,7 +13,7 @@ val hibernateEntityManager = "org.hibernate" % "hibernate-entitymanager" % "5.4.
 val jpaApi = "org.hibernate.javax.persistence" % "hibernate-jpa-2.1-api" % "1.0.0.Final"
 val validationApi = "javax.validation" % "validation-api" % "1.1.0.Final"
 
-val akkaVersion = "2.6.0-M2"
+val akkaVersion = "2.6.0-M3"
 
 lazy val `shopping-cart-java` = (project in file("."))
   .aggregate(`shopping-cart-api`, `shopping-cart`)
@@ -32,6 +32,8 @@ lazy val `shopping-cart` = (project in file("shopping-cart"))
       "com.typesafe.akka" %% "akka-cluster-typed" % akkaVersion,
       "com.typesafe.akka" %% "akka-cluster-sharding-typed" % akkaVersion,
       "com.typesafe.akka" %% "akka-persistence-typed" % akkaVersion,
+      // Netty needed for Akka classic remoting
+      "io.netty" % "netty" % "3.10.6.Final",
       lagomJavadslPersistenceJdbc,
       lagomJavadslPersistenceJpa,
       lagomLogback,

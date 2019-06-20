@@ -6,7 +6,6 @@ import akka.actor.typed.ActorRef;
 import akka.actor.typed.ActorSystem;
 import akka.cluster.sharding.typed.javadsl.ClusterSharding;
 import akka.cluster.sharding.typed.javadsl.EntityRef;
-import akka.util.Timeout;
 import com.example.shoppingcart.api.ShoppingCart;
 import com.example.shoppingcart.api.ShoppingCartReportView;
 import com.example.shoppingcart.api.ShoppingCartService;
@@ -38,7 +37,7 @@ public class ShoppingCartServiceImpl implements ShoppingCartService {
     private final ClusterSharding clusterSharding;
 
     private Logger logger = LoggerFactory.getLogger(this.getClass());
-    private final Timeout askTimeout = Timeout.create(Duration.ofSeconds(3));
+    private final Duration askTimeout = Duration.ofSeconds(3);
 
     @Inject
     public ShoppingCartServiceImpl(ActorSystem<?> system, ReportRepository reportRepository) {
